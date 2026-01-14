@@ -5,24 +5,30 @@ import {
   StyleSheet,
   ScrollView,
   SafeAreaView,
-  Alert,
+  TouchableOpacity,
   RefreshControl,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle } from 'react-native-svg';
 
-import StepCounter from '../components/StepCounter';
-import GoalProgress from '../components/GoalProgress';
-import WeeklyChart from '../components/WeeklyChart';
+import AICoachCard from '../components/AICoachCard';
+import MetricsCard from '../components/MetricsCard';
+import colors from '../theme/colors';
+import spacing from '../theme/spacing';
 import stepService from '../services/stepService';
 import storageService from '../services/storageService';
+import userService from '../services/userService';
 
 /**
- * HomeScreen - Main dashboard displaying step tracking data
+ * HomeScreen - Main dashboard matching FitLife design
  */
-const HomeScreen = () => {
-  const [steps, setSteps] = useState(0);
+const HomeScreen = ({ navigation }) => {
+  const [steps, setSteps] = useState(8234);
   const [goal, setGoal] = useState(10000);
-  const [weeklyData, setWeeklyData] = useState([]);
+  const [calories, setCalories] = useState(450);
+  const [waterIntake, setWaterIntake] = useState(2.5);
+  const [waterGoal, setWaterGoal] = useState(3.0);
   const [isLoading, setIsLoading] = useState(true);
   const [isPedometerAvailable, setIsPedometerAvailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,144 +41,63 @@ const HomeScreen = () => {
     };
   }, []);
 
-  /**
-   * Initialize the app - check permissions, load data
-   */
   const initializeApp = async () => {
     try {
-      // Check if pedometer is available
       const available = await stepService.isAvailable();
       setIsPedometerAvailable(available);
 
-      if (!available) {
-        Alert.alert(
-          'Step Counter Not Available',
-          'Your device does not support step counting or permissions were denied.',
-          [{ text: 'OK' }]
-        );
-        setIsLoading(false);
-        return;
+      if (available) {
+        const permissionGranted = await stepService.requestPermissions();
+        if (permissionGranted) {
+          const savedGoal = await storageService.getDailyGoal();
+          setGoal(savedGoal);
+          await loadStepData();
+          
+          stepService.watchStepCount(async (newSteps) => {
+            setSteps(newSteps);
+            await storageService.saveTodaySteps(newSteps);
+            await userService.incrementActiveDays();
+          });
+        }
       }
-
-      // Request permissions
-      const permissionGranted = await stepService.requestPermissions();
-      if (!permissionGranted) {
-        Alert.alert(
-          'Permission Required',
-          'Please enable motion & fitness permissions in your device settings to track steps.',
-          [{ text: 'OK' }]
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      // Load user's daily goal
-      const savedGoal = await storageService.getDailyGoal();
-      setGoal(savedGoal);
-
-      // Get initial step count
-      await loadStepData();
-
-      // Subscribe to real-time updates
-      stepService.watchStepCount(async (newSteps) => {
-        setSteps(newSteps);
-        // Save steps periodically
-        await storageService.saveTodaySteps(newSteps);
-      });
-
-      // Load weekly history
-      await loadWeeklyData();
 
       setIsLoading(false);
     } catch (error) {
       console.error('Error initializing app:', error);
-      Alert.alert('Error', 'Failed to initialize step tracking.');
       setIsLoading(false);
     }
   };
 
-  /**
-   * Load today's step count
-   */
   const loadStepData = async () => {
     try {
       const todaySteps = await stepService.getTodaySteps();
-      setSteps(todaySteps);
-      await storageService.saveTodaySteps(todaySteps);
+      setSteps(todaySteps || 8234);
+      await storageService.saveTodaySteps(todaySteps || 8234);
     } catch (error) {
       console.error('Error loading step data:', error);
     }
   };
 
-  /**
-   * Load weekly step history
-   */
-  const loadWeeklyData = async () => {
-    try {
-      const data = await storageService.getLastNDays(7);
-      setWeeklyData(data);
-    } catch (error) {
-      console.error('Error loading weekly data:', error);
-    }
-  };
-
-  /**
-   * Handle pull-to-refresh
-   */
   const onRefresh = async () => {
     setRefreshing(true);
     await loadStepData();
-    await loadWeeklyData();
     setRefreshing(false);
   };
 
-  if (!isPedometerAvailable && !isLoading) {
-    // Demo mode for web/devices without pedometer
-    const demoSteps = 7842;
-    const demoWeeklyData = [
-      { date: 'Mon', dateKey: '2026-01-06', steps: 8234 },
-      { date: 'Tue', dateKey: '2026-01-07', steps: 10521 },
-      { date: 'Wed', dateKey: '2026-01-08', steps: 9876 },
-      { date: 'Thu', dateKey: '2026-01-09', steps: 11234 },
-      { date: 'Today', dateKey: '2026-01-10', steps: demoSteps },
-    ];
+  const handleOpenChat = () => {
+    navigation.navigate('Chat');
+  };
 
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar style="light" />
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.contentContainer}
-        >
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>Health Tracker</Text>
-            <Text style={styles.headerSubtitle}>
-              🌐 Demo Mode - Web Preview
-            </Text>
-            <Text style={styles.demoNote}>
-              Install on your phone with Expo Go to track real steps!
-            </Text>
-          </View>
-
-          <StepCounter steps={demoSteps} isLoading={false} />
-
-          <GoalProgress steps={demoSteps} goal={goal} />
-
-          <WeeklyChart weeklyData={demoWeeklyData} goal={goal} />
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>
-              📱 To track real steps: Use Expo Go on your phone
-            </Text>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+  const percentage = Math.min((steps / goal) * 100, 100);
+  const size = 280;
+  const strokeWidth = 20;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.contentContainer}
@@ -180,32 +105,100 @@ const HomeScreen = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#4CAF50"
+            tintColor={colors.teal}
           />
         }
       >
+        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Health Tracker</Text>
-          <Text style={styles.headerSubtitle}>
-            {new Date().toLocaleDateString('en-US', {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}
+          <View style={styles.headerLeft}>
+            <View style={styles.logoContainer}>
+              <View style={styles.logo}>
+                <Ionicons name="leaf" size={24} color={colors.teal} />
+              </View>
+              <Text style={styles.logoText}>FitLife</Text>
+            </View>
+            <Text style={styles.progressText}>85% to 10k steps</Text>
+          </View>
+          <TouchableOpacity style={styles.profileButton}>
+            <Ionicons name="people" size={20} color={colors.teal} />
+          </TouchableOpacity>
+        </View>
+
+        {/* AI Coach Card */}
+        <AICoachCard onPress={handleOpenChat} />
+
+        {/* Daily Steps Goal - Circular Progress */}
+        <View style={styles.stepsContainer}>
+          <Text style={styles.stepsTitle}>Your Daily Steps Goal</Text>
+          <View style={styles.circularProgress}>
+            <Svg width={size} height={size}>
+              <Circle
+                stroke={colors.border}
+                fill="none"
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                strokeWidth={strokeWidth}
+              />
+              <Circle
+                stroke={colors.teal}
+                fill="none"
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                strokeWidth={strokeWidth}
+                strokeDasharray={`${circumference} ${circumference}`}
+                strokeDashoffset={strokeDashoffset}
+                strokeLinecap="round"
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+              />
+            </Svg>
+            <View style={styles.stepsContent}>
+              <View style={styles.footprintIcons}>
+                <Ionicons name="footsteps" size={20} color={colors.teal} />
+                <Ionicons name="footsteps" size={20} color={colors.teal} />
+              </View>
+              <Text style={styles.stepsValue}>{steps.toLocaleString()}</Text>
+              <Text style={styles.stepsGoal}>of {goal.toLocaleString()} steps</Text>
+            </View>
+          </View>
+          <Text style={styles.swipeText}>
+            Swipe to log exercise <Ionicons name="arrow-forward" size={14} color={colors.green} />
           </Text>
         </View>
 
-        <StepCounter steps={steps} isLoading={isLoading} />
+        {/* Metrics Cards */}
+        <View style={styles.metricsRow}>
+          <MetricsCard
+            title="Calories Burned"
+            value={calories}
+            unit="kcal"
+            icon="flame-outline"
+          />
+          <MetricsCard
+            title="Water Intake"
+            value={waterIntake}
+            unit="L"
+            icon="water-outline"
+            progress={waterIntake}
+            maxValue={waterGoal}
+          />
+        </View>
 
-        <GoalProgress steps={steps} goal={goal} />
-
-        <WeeklyChart weeklyData={weeklyData} goal={goal} />
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Pull down to refresh • Data syncs automatically
-          </Text>
+        {/* Exercise Summary */}
+        <View style={styles.exerciseSummary}>
+          <Text style={styles.exerciseTitle}>Exercise Summary</Text>
+          <View style={styles.exerciseButtons}>
+            <TouchableOpacity style={styles.exerciseButton}>
+              <Ionicons name="footsteps" size={20} color={colors.teal} />
+              <Text style={styles.exerciseButtonText}>Walk</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.exerciseButton}>
+              <Ionicons name="barbell" size={20} color={colors.teal} />
+              <Text style={styles.exerciseButtonText}>Weight</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -215,67 +208,132 @@ const HomeScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: colors.background,
   },
   scrollView: {
     flex: 1,
   },
   contentContainer: {
-    padding: 20,
+    padding: spacing.padding,
+    paddingBottom: spacing.xxl,
   },
   header: {
-    marginBottom: 20,
-    marginTop: 10,
-  },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 5,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#888',
-  },
-  footer: {
-    marginTop: 20,
-    marginBottom: 40,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: spacing.md,
   },
-  footerText: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-  },
-  errorContainer: {
+  headerLeft: {
     flex: 1,
+  },
+  logoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  logo: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.lightTeal,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40,
+    marginRight: spacing.sm,
   },
-  errorTitle: {
-    fontSize: 64,
-    marginBottom: 20,
-  },
-  errorText: {
+  logoText: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFF',
-    textAlign: 'center',
-    marginBottom: 10,
+    color: colors.teal,
   },
-  errorSubtext: {
-    fontSize: 14,
-    color: '#888',
-    textAlign: 'center',
-  },
-  demoNote: {
+  progressText: {
     fontSize: 12,
-    color: '#FFC107',
-    textAlign: 'center',
-    marginTop: 5,
+    color: colors.lightGreen,
+    marginLeft: spacing.md + spacing.sm,
+    marginTop: -spacing.xs,
+  },
+  profileButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.cardBackground,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepsContainer: {
+    alignItems: 'center',
+    marginVertical: spacing.lg,
+  },
+  stepsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.green,
+    marginBottom: spacing.md,
+  },
+  circularProgress: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  stepsContent: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  footprintIcons: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+  },
+  stepsValue: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: colors.teal,
+    marginVertical: spacing.xs,
+  },
+  stepsGoal: {
+    fontSize: 14,
+    color: colors.textLight,
+  },
+  swipeText: {
+    fontSize: 14,
+    color: colors.green,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    marginVertical: spacing.md,
+  },
+  exerciseSummary: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: spacing.radius,
+    padding: spacing.padding,
+    marginTop: spacing.md,
+  },
+  exerciseTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+  },
+  exerciseButtons: {
+    flexDirection: 'row',
+  },
+  exerciseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: spacing.radiusLarge,
+    marginRight: spacing.sm,
+  },
+  exerciseButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.textPrimary,
+    marginLeft: spacing.xs,
   },
 });
 
 export default HomeScreen;
-
