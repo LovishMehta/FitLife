@@ -1,35 +1,45 @@
 {
   "expo": {
-    "name": "health-tracker",
-    "slug": "health-tracker",
+    "name": "FatToFit",
+    "slug": "fattofit",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "scheme": "fattofit",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#121212"
+      "backgroundColor": "#0A0A0F"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.fattofit.app",
       "infoPlist": {
-        "NSMotionUsageDescription": "This app uses motion data to count your daily steps and track your fitness activity."
+        "NSHealthShareUsageDescription": "FatToFit needs access to your health data to track your fitness progress and provide personalized coaching.",
+        "NSHealthUpdateUsageDescription": "FatToFit needs permission to update your health data."
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#121212"
+        "backgroundColor": "#0A0A0F"
       },
-      "edgeToEdgeEnabled": true,
-      "permissions": [
-        "ACTIVITY_RECOGNITION"
-      ]
+      "package": "com.fattofit.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
     }
   }
 }
