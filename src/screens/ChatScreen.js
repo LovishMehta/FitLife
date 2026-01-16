@@ -186,7 +186,7 @@ const ChatScreen = ({ navigation }) => {
             value={inputText}
             onChangeText={setInputText}
             onSubmitEditing={handleSend}
-            multiline
+            multiline={true}
           />
           <TouchableOpacity style={styles.inputIcon}>
             <Ionicons name="happy-outline" size={24} color={colors.textLight} />
