@@ -26,10 +26,17 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "ACTIVITY_RECOGNITION"
-      ]
+      ],
+      "package": "com.anonymous.healthtracker"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "da125893-39ce-4e7e-a5fc-aa46d37bd920"
+      }
+    },
+    "owner": "7495032445"
   }
 }

@@ -29,6 +29,8 @@ export const colors = {
   warning: '#FFC107',
   error: '#F44336',
   info: '#2196F3',
+  orange: '#FF9800',
+  red: '#F44336',
   
   // Border colors
   border: '#E0E0E0',

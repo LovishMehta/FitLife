@@ -5,9 +5,9 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
@@ -54,7 +54,7 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
         <ProfileHeader />
@@ -101,7 +101,7 @@ const ProfileScreen = ({ navigation }) => {
             onPress={() => handleSettingPress('Widgets')}
           />
           <SettingsListItem
-            icon="checkmark-square-outline"
+            icon="checkbox-outline"
             title="Remove ads"
             onPress={() => handleSettingPress('Remove ads')}
           />

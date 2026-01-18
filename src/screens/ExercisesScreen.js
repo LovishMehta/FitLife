@@ -45,7 +45,7 @@ const ExercisesScreen = ({ navigation }) => {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
       <ScrollView
         style={styles.scrollView}

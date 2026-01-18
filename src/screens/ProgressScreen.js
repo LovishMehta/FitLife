@@ -5,100 +5,260 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
   Dimensions,
+  RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
 import spacing from '../theme/spacing';
 import storageService from '../services/storageService';
+import stepService from '../services/stepService';
 
 const { width } = Dimensions.get('window');
 const BAR_WIDTH = (width - spacing.padding * 2 - 48) / 7;
 const MAX_BAR_HEIGHT = 120;
 
+// Helper functions
+const calculateCalories = (steps) => {
+  // Rough estimate: 0.04 calories per step
+  return Math.round(steps * 0.04);
+};
+
+const calculateStreak = (history) => {
+  // Calculate consecutive days with steps > 0
+  const sortedDates = Object.keys(history).sort().reverse();
+  let streak = 0;
+  
+  for (const dateKey of sortedDates) {
+    if (history[dateKey] > 0) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  
+  return Math.max(1, streak);
+};
+
+const getDayLabel = (dateKey, index) => {
+  const date = new Date(dateKey + 'T00:00:00');
+  const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  return days[date.getDay()];
+};
+
+const formatDateForDisplay = (dateKey) => {
+  const date = new Date(dateKey + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  if (dateKey === storageService.getTodayKey()) {
+    return 'Today';
+  }
+  
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = storageService.formatDateKey(yesterday);
+  if (dateKey === yesterdayKey) {
+    return 'Yesterday';
+  }
+  
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${monthNames[date.getMonth()]} ${date.getDate()}`;
+};
+
 /**
- * Progress Screen - Weekly/Monthly progress view with bar chart
+ * Progress Screen - Daily/Weekly/Monthly progress view with real pedometer data
  */
 const ProgressScreen = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('Week');
-  const [weeklyData, setWeeklyData] = useState([]);
+  const [periodData, setPeriodData] = useState([]);
   const [totalSteps, setTotalSteps] = useState(0);
   const [avgSteps, setAvgSteps] = useState(0);
   const [streak, setStreak] = useState(1);
-  const [calories, setCalories] = useState(104);
-  const [weekOffset, setWeekOffset] = useState(0);
+  const [calories, setCalories] = useState(0);
+  const [periodOffset, setPeriodOffset] = useState(0); // For navigating weeks/months
+  const [refreshing, setRefreshing] = useState(false);
+  const [currentSteps, setCurrentSteps] = useState(0); // Today's real-time steps
 
   useEffect(() => {
-    loadWeeklyData();
-  }, [weekOffset]);
+    loadPeriodData();
+  }, [selectedPeriod, periodOffset]);
 
-  const loadWeeklyData = async () => {
-    const data = await storageService.getLastNDays(7);
+  // Set up interval to refresh data from storage (HomeScreen updates storage)
+  useEffect(() => {
+    // Load initial data
+    const loadData = async () => {
+      const history = await storageService.getStepHistory();
+      const todayKey = storageService.getTodayKey();
+      const savedStepsToday = history[todayKey] || 0;
+      setCurrentSteps(savedStepsToday);
+      await loadPeriodData();
+    };
     
-    // Generate mock data if no real data exists
-    const processedData = data.map((day, index) => {
-      const mockSteps = day.steps || Math.floor(Math.random() * 8000) + 2000;
-      return {
-        ...day,
-        steps: mockSteps,
-        dayLabel: getDayLabel(index),
-      };
-    });
+    loadData();
     
-    setWeeklyData(processedData);
+    // Refresh every 2 seconds to get updates from HomeScreen's pedometer
+    const interval = setInterval(() => {
+      loadData();
+    }, 2000);
     
-    if (processedData.length > 0) {
-      const total = processedData.reduce((sum, day) => sum + day.steps, 0);
-      const avg = Math.round(total / processedData.length);
-      setTotalSteps(total);
-      setAvgSteps(avg);
+    return () => clearInterval(interval);
+  }, [selectedPeriod, periodOffset]);
+
+  const loadPeriodData = async () => {
+    try {
+      const history = await storageService.getStepHistory();
+      const todayKey = storageService.getTodayKey();
+      
+      let data = [];
+      
+      if (selectedPeriod === 'Day') {
+        // Show today's data
+        const todaySteps = history[todayKey] || currentSteps || 0;
+        data = [{
+          dateKey: todayKey,
+          date: formatDateForDisplay(todayKey),
+          steps: todaySteps,
+          dayLabel: 'T',
+        }];
+      } else if (selectedPeriod === 'Week') {
+        // Show last 7 days
+        const dates = storageService.getLastNDates(7);
+        data = dates.map((dateKey, index) => {
+          const steps = dateKey === todayKey ? (currentSteps || history[dateKey] || 0) : (history[dateKey] || 0);
+          return {
+            dateKey,
+            date: formatDateForDisplay(dateKey),
+            steps,
+            dayLabel: getDayLabel(dateKey, index),
+          };
+        });
+      } else if (selectedPeriod === 'Month') {
+        // Show last 30 days
+        const dates = storageService.getLastNDates(30);
+        data = dates.map((dateKey, index) => {
+          const steps = dateKey === todayKey ? (currentSteps || history[dateKey] || 0) : (history[dateKey] || 0);
+          return {
+            dateKey,
+            date: formatDateForDisplay(dateKey),
+            steps,
+            dayLabel: getDayLabel(dateKey, index),
+          };
+        });
+      }
+      
+      setPeriodData(data);
+      
+      // Calculate totals and averages
+      if (data.length > 0) {
+        const total = data.reduce((sum, day) => sum + day.steps, 0);
+        const avg = Math.round(total / data.length);
+        const totalCalories = calculateCalories(total);
+        const currentStreak = calculateStreak(history);
+        
+        setTotalSteps(total);
+        setAvgSteps(avg);
+        setCalories(totalCalories);
+        setStreak(currentStreak);
+      }
+    } catch (error) {
+      console.error('Error loading period data:', error);
     }
   };
 
-  const getDayLabel = (index) => {
-    const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    const today = new Date().getDay();
-    const dayIndex = (today - 6 + index + 7) % 7;
-    return days[dayIndex];
-  };
-
-  const getCurrentWeekNumber = () => {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), 0, 1);
-    const days = Math.floor((now - start) / (24 * 60 * 60 * 1000));
-    return Math.ceil((days + start.getDay() + 1) / 7) + weekOffset;
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadPeriodData();
+    setRefreshing(false);
   };
 
   const getMaxSteps = () => {
-    if (weeklyData.length === 0) return 10000;
-    return Math.max(...weeklyData.map(d => d.steps), 10000);
+    if (periodData.length === 0) return 10000;
+    const max = Math.max(...periodData.map(d => d.steps));
+    return max > 0 ? max : 10000;
   };
 
   const getBarHeight = (steps) => {
     const maxSteps = getMaxSteps();
+    if (maxSteps === 0) return 0;
     return (steps / maxSteps) * MAX_BAR_HEIGHT;
   };
 
-  const isToday = (index) => {
-    return index === weeklyData.length - 1;
+  const isToday = (dateKey) => {
+    return dateKey === storageService.getTodayKey();
   };
 
-  const handlePreviousWeek = () => {
-    setWeekOffset(weekOffset - 1);
+  const handlePeriodChange = (period) => {
+    setSelectedPeriod(period);
+    setPeriodOffset(0); // Reset offset when changing period
   };
 
-  const handleNextWeek = () => {
-    if (weekOffset < 0) {
-      setWeekOffset(weekOffset + 1);
+  const handlePreviousPeriod = () => {
+    setPeriodOffset(periodOffset - 1);
+  };
+
+  const handleNextPeriod = () => {
+    if (periodOffset < 0) {
+      setPeriodOffset(periodOffset + 1);
     }
   };
 
+  const getPeriodTitle = () => {
+    if (selectedPeriod === 'Day') {
+      return 'Today';
+    } else if (selectedPeriod === 'Week') {
+      const now = new Date();
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - now.getDay() + (periodOffset * 7));
+      return periodOffset === 0 ? 'This Week' : `Week of ${formatDateForDisplay(storageService.formatDateKey(startOfWeek))}`;
+    } else if (selectedPeriod === 'Month') {
+      const now = new Date();
+      const month = new Date(now.getFullYear(), now.getMonth() + periodOffset, 1);
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return periodOffset === 0 ? 'This Month' : `${monthNames[month.getMonth()]} ${month.getFullYear()}`;
+    }
+    return '';
+  };
+
+  const getGoalForPeriod = () => {
+    if (selectedPeriod === 'Day') {
+      return 10000; // Daily goal
+    } else if (selectedPeriod === 'Week') {
+      return 70000; // Weekly goal (7 days * 10k)
+    } else if (selectedPeriod === 'Month') {
+      return 300000; // Monthly goal (30 days * 10k)
+    }
+    return 10000;
+  };
+
+  const getSummaryTitle = () => {
+    if (selectedPeriod === 'Day') {
+      return 'Daily Summary';
+    } else if (selectedPeriod === 'Week') {
+      return 'Weekly Summary';
+    } else if (selectedPeriod === 'Month') {
+      return 'Monthly Summary';
+    }
+    return 'Summary';
+  };
+
+  // For Month view, show aggregated data (group by week or show all days)
+  const displayData = selectedPeriod === 'Month' 
+    ? periodData.filter((_, index) => index % Math.ceil(30 / 7) === 0 || index === periodData.length - 1) // Show ~7 data points
+    : periodData;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={styles.contentContainer}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.headerButton}>
@@ -109,7 +269,7 @@ const ProgressScreen = () => {
               <TouchableOpacity
                 key={period}
                 style={[styles.periodButton, selectedPeriod === period && styles.periodButtonActive]}
-                onPress={() => setSelectedPeriod(period)}
+                onPress={() => handlePeriodChange(period)}
               >
                 <Text style={[styles.periodText, selectedPeriod === period && styles.periodTextActive]}>
                   {period}
@@ -124,69 +284,100 @@ const ProgressScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Week Navigation */}
-        <View style={styles.weekNavigation}>
-          <TouchableOpacity onPress={handlePreviousWeek} style={styles.weekNavButton}>
-            <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <Text style={styles.weekTitle}>
-            {getCurrentWeekNumber()} • {weekOffset === 0 ? 'This Week' : `Week ${getCurrentWeekNumber()}`}
-          </Text>
-          <TouchableOpacity 
-            onPress={handleNextWeek} 
-            style={[styles.weekNavButton, weekOffset >= 0 && styles.weekNavButtonDisabled]}
-            disabled={weekOffset >= 0}
-          >
-            <Ionicons 
-              name="chevron-forward" 
-              size={20} 
-              color={weekOffset >= 0 ? colors.border : colors.textSecondary} 
-            />
-          </TouchableOpacity>
-        </View>
+        {/* Period Navigation */}
+        {(selectedPeriod === 'Week' || selectedPeriod === 'Month') && (
+          <View style={styles.periodNavigation}>
+            <TouchableOpacity onPress={handlePreviousPeriod} style={styles.periodNavButton}>
+              <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.periodTitle}>
+              {getPeriodTitle()}
+            </Text>
+            <TouchableOpacity 
+              onPress={handleNextPeriod} 
+              style={[styles.periodNavButton, periodOffset >= 0 && styles.periodNavButtonDisabled]}
+              disabled={periodOffset >= 0}
+            >
+              <Ionicons 
+                name="chevron-forward" 
+                size={20} 
+                color={periodOffset >= 0 ? colors.border : colors.textSecondary} 
+              />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Total Steps */}
         <View style={styles.totalContainer}>
           <Text style={styles.totalSteps}>{totalSteps.toLocaleString()}</Text>
           <View style={styles.avgContainer}>
-            <Text style={styles.avgText}>AVG {avgSteps.toLocaleString()}</Text>
-            <View style={styles.trendIndicator}>
-              <Ionicons 
-                name={avgSteps > 5000 ? "arrow-up" : "arrow-down"} 
-                size={14} 
-                color={avgSteps > 5000 ? colors.green : colors.error} 
-              />
-            </View>
+            <Text style={styles.avgText}>
+              {selectedPeriod === 'Day' ? 'TODAY' : `AVG ${avgSteps.toLocaleString()}`}
+            </Text>
+            {selectedPeriod !== 'Day' && (
+              <View style={styles.trendIndicator}>
+                <Ionicons 
+                  name={avgSteps > 5000 ? "arrow-up" : "arrow-down"} 
+                  size={14} 
+                  color={avgSteps > 5000 ? colors.green : colors.error} 
+                />
+              </View>
+            )}
           </View>
         </View>
 
         {/* Bar Chart */}
-        <View style={styles.chartContainer}>
-          <View style={styles.barsContainer}>
-            {weeklyData.map((day, index) => (
-              <View key={index} style={styles.barColumn}>
-                <Text style={styles.barValue}>
-                  {day.steps >= 1000 ? `${(day.steps / 1000).toFixed(1)}k` : day.steps}
-                </Text>
-                <View style={styles.barWrapper}>
-                  <View
-                    style={[
-                      styles.bar,
-                      {
-                        height: getBarHeight(day.steps),
-                        backgroundColor: isToday(index) ? colors.green : colors.teal,
-                      },
-                    ]}
-                  />
-                </View>
-                <View style={[styles.dayDot, isToday(index) && styles.dayDotActive]} />
-                <Text style={[styles.dayLabel, isToday(index) && styles.dayLabelActive]}>
-                  {day.dayLabel}
-                </Text>
-              </View>
-            ))}
+        {selectedPeriod !== 'Day' && (
+          <View style={styles.chartContainer}>
+            <View style={styles.barsContainer}>
+              {displayData.map((day, index) => {
+                const isTodayDay = isToday(day.dateKey);
+                return (
+                  <View key={day.dateKey} style={styles.barColumn}>
+                    <Text style={styles.barValue}>
+                      {day.steps >= 1000 ? `${(day.steps / 1000).toFixed(1)}k` : day.steps}
+                    </Text>
+                    <View style={styles.barWrapper}>
+                      <View
+                        style={[
+                          styles.bar,
+                          {
+                            height: getBarHeight(day.steps),
+                            backgroundColor: isTodayDay ? colors.green : colors.teal,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <View style={[styles.dayDot, isTodayDay && styles.dayDotActive]} />
+                    <Text style={[styles.dayLabel, isTodayDay && styles.dayLabelActive]}>
+                      {selectedPeriod === 'Month' ? day.date.split(' ')[1] : day.dayLabel}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
           </View>
-        </View>
+        )}
+
+        {/* Day View - Show single day progress */}
+        {selectedPeriod === 'Day' && periodData.length > 0 && (
+          <View style={styles.dayViewContainer}>
+            <View style={styles.dayProgressCard}>
+              <Text style={styles.dayProgressLabel}>Today's Progress</Text>
+              <View style={styles.dayProgressBar}>
+                <View 
+                  style={[
+                    styles.dayProgressFill, 
+                    { width: `${Math.min(100, (periodData[0].steps / getGoalForPeriod()) * 100)}%` }
+                  ]} 
+                />
+              </View>
+              <Text style={styles.dayProgressText}>
+                {periodData[0].steps.toLocaleString()} / {getGoalForPeriod().toLocaleString()} steps
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
@@ -206,9 +397,9 @@ const ProgressScreen = () => {
           </View>
         </View>
 
-        {/* Weekly Summary */}
+        {/* Summary */}
         <View style={styles.summarySection}>
-          <Text style={styles.sectionTitle}>Weekly Summary</Text>
+          <Text style={styles.sectionTitle}>{getSummaryTitle()}</Text>
           <View style={styles.summaryCard}>
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
@@ -219,8 +410,12 @@ const ProgressScreen = () => {
               <View style={styles.summaryDivider} />
               <View style={styles.summaryItem}>
                 <Ionicons name="speedometer" size={20} color={colors.green} />
-                <Text style={styles.summaryLabel}>Avg/Day</Text>
-                <Text style={styles.summaryValue}>{avgSteps.toLocaleString()}</Text>
+                <Text style={styles.summaryLabel}>{selectedPeriod === 'Day' ? 'Goal' : 'Avg/Day'}</Text>
+                <Text style={styles.summaryValue}>
+                  {selectedPeriod === 'Day' 
+                    ? getGoalForPeriod().toLocaleString() 
+                    : avgSteps.toLocaleString()}
+                </Text>
               </View>
             </View>
             <View style={styles.summaryRow}>
@@ -241,24 +436,26 @@ const ProgressScreen = () => {
 
         {/* Goal Progress */}
         <View style={styles.goalSection}>
-          <Text style={styles.sectionTitle}>Weekly Goal</Text>
+          <Text style={styles.sectionTitle}>
+            {selectedPeriod === 'Day' ? 'Daily' : selectedPeriod === 'Week' ? 'Weekly' : 'Monthly'} Goal
+          </Text>
           <View style={styles.goalCard}>
             <View style={styles.goalHeader}>
-              <Text style={styles.goalTitle}>70,000 steps</Text>
+              <Text style={styles.goalTitle}>{getGoalForPeriod().toLocaleString()} steps</Text>
               <Text style={styles.goalPercentage}>
-                {Math.min(100, Math.round((totalSteps / 70000) * 100))}%
+                {Math.min(100, Math.round((totalSteps / getGoalForPeriod()) * 100))}%
               </Text>
             </View>
             <View style={styles.goalProgressBar}>
               <View 
                 style={[
                   styles.goalProgressFill, 
-                  { width: `${Math.min(100, (totalSteps / 70000) * 100)}%` }
+                  { width: `${Math.min(100, (totalSteps / getGoalForPeriod()) * 100)}%` }
                 ]} 
               />
             </View>
             <Text style={styles.goalRemaining}>
-              {Math.max(0, 70000 - totalSteps).toLocaleString()} steps remaining
+              {Math.max(0, getGoalForPeriod() - totalSteps).toLocaleString()} steps remaining
             </Text>
           </View>
         </View>
@@ -330,20 +527,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
-  weekNavigation: {
+  periodNavigation: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.padding,
     marginBottom: spacing.sm,
   },
-  weekNavButton: {
+  periodNavButton: {
     padding: spacing.sm,
   },
-  weekNavButtonDisabled: {
+  periodNavButtonDisabled: {
     opacity: 0.5,
   },
-  weekTitle: {
+  periodTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.textPrimary,
@@ -427,6 +624,38 @@ const styles = StyleSheet.create({
   dayLabelActive: {
     color: colors.green,
     fontWeight: '600',
+  },
+  dayViewContainer: {
+    paddingHorizontal: spacing.padding,
+    marginVertical: spacing.lg,
+  },
+  dayProgressCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: spacing.radius,
+    padding: spacing.lg,
+  },
+  dayProgressLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+  },
+  dayProgressBar: {
+    height: 12,
+    backgroundColor: colors.border,
+    borderRadius: 6,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  dayProgressFill: {
+    height: '100%',
+    backgroundColor: colors.green,
+    borderRadius: 6,
+  },
+  dayProgressText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
   statsContainer: {
     flexDirection: 'row',
