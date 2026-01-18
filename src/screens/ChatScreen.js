@@ -15,7 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
 import spacing from '../theme/spacing';
 import ChatBubble from '../components/ChatBubble';
-import mockAIService from '../services/mockAIService';
+import aiService from '../services/aiService';
+import chatService from '../services/chatService';
 
 /**
  * Chat Screen - AI Coach Ria interface
@@ -25,17 +26,50 @@ const ChatScreen = ({ navigation }) => {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollViewRef = useRef(null);
-  const suggestedActions = mockAIService.getSuggestedActions();
+  const suggestedActions = aiService.getSuggestedActions();
 
   useEffect(() => {
-    const initialMessage = {
-      id: Date.now(),
-      message: mockAIService.getRandomResponse('default'),
-      isUser: false,
-      timestamp: getCurrentTime(),
+    loadChatHistory();
+    
+    // Cleanup on unmount - sync remaining messages
+    return () => {
+      chatService.onLeaveChatScreen();
     };
-    setMessages([initialMessage]);
   }, []);
+
+  const loadChatHistory = async () => {
+    // Load existing conversation from local storage
+    const conversation = await chatService.getCurrentConversation();
+    
+    if (conversation.length > 0) {
+      // Use existing conversation
+      const formattedMessages = conversation.map(msg => ({
+        id: msg.id,
+        message: msg.message,
+        isUser: msg.isUser,
+        timestamp: formatTimestamp(msg.createdAt),
+      }));
+      setMessages(formattedMessages);
+    } else {
+      // New conversation - show welcome message
+      const welcomeMessage = {
+        id: Date.now(),
+        message: "Hi! I'm Ria, your AI health coach. 😊\n\nI can help you with step goals, motivation, and fitness tips. What would you like to know?",
+        isUser: false,
+        timestamp: getCurrentTime(),
+      };
+      setMessages([welcomeMessage]);
+    }
+  };
+
+  const formatTimestamp = (isoDate) => {
+    const date = new Date(isoDate);
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'pm' : 'am';
+    const displayHours = hours % 12 || 12;
+    return `${String(displayHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${ampm}`;
+  };
 
   useEffect(() => {
     setTimeout(() => {
@@ -63,20 +97,35 @@ const ChatScreen = ({ navigation }) => {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const messageText = inputText.trim();
     setInputText('');
     setIsTyping(true);
 
-    const aiResponse = await mockAIService.getResponse(inputText.trim());
-    setIsTyping(false);
+    try {
+      // Use real AI service (handles auth check and fallback)
+      const aiResponse = await aiService.getResponse(messageText);
+      setIsTyping(false);
 
-    const aiMessage = {
-      id: Date.now() + 1,
-      message: aiResponse,
-      isUser: false,
-      timestamp: getCurrentTime(),
-    };
+      const aiMessage = {
+        id: Date.now() + 1,
+        message: aiResponse,
+        isUser: false,
+        timestamp: getCurrentTime(),
+      };
 
-    setMessages(prev => [...prev, aiMessage]);
+      setMessages(prev => [...prev, aiMessage]);
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      setIsTyping(false);
+      
+      const errorMessage = {
+        id: Date.now() + 1,
+        message: "Sorry, I'm having trouble connecting. Please try again in a moment.",
+        isUser: false,
+        timestamp: getCurrentTime(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    }
   };
 
   const handleSuggestion = async (suggestion) => {
@@ -90,17 +139,22 @@ const ChatScreen = ({ navigation }) => {
     setMessages(prev => [...prev, userMessage]);
     setIsTyping(true);
 
-    const aiResponse = await mockAIService.getResponse(suggestion);
-    setIsTyping(false);
+    try {
+      const aiResponse = await aiService.getResponse(suggestion);
+      setIsTyping(false);
 
-    const aiMessage = {
-      id: Date.now() + 1,
-      message: aiResponse,
-      isUser: false,
-      timestamp: getCurrentTime(),
-    };
+      const aiMessage = {
+        id: Date.now() + 1,
+        message: aiResponse,
+        isUser: false,
+        timestamp: getCurrentTime(),
+      };
 
-    setMessages(prev => [...prev, aiMessage]);
+      setMessages(prev => [...prev, aiMessage]);
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      setIsTyping(false);
+    }
   };
 
   const handleFeedback = (type) => {
@@ -120,19 +174,14 @@ const ChatScreen = ({ navigation }) => {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
-          <View style={styles.logoContainer}>
+          <View style={styles.headerCenter}>
             <View style={styles.logo}>
               <Text style={styles.logoText}>R</Text>
             </View>
+            <Text style={styles.headerTitle}>Ria</Text>
           </View>
-          <View style={styles.headerButtons}>
-            <TouchableOpacity style={styles.premiumButton}>
-              <Ionicons name="star" size={16} color={colors.yellow} />
-              <Text style={styles.premiumButtonText}>Premium Feature</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.trialButton}>
-              <Text style={styles.trialButtonText}>Free Trial +</Text>
-            </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
           </View>
         </View>
 
@@ -229,10 +278,13 @@ const styles = StyleSheet.create({
   },
   backButton: {
     padding: spacing.xs,
+    width: 40,
   },
-  logoContainer: {
+  headerCenter: {
     flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   logo: {
     width: 32,
@@ -247,30 +299,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  headerButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  premiumButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    marginRight: spacing.xs,
-  },
-  premiumButtonText: {
-    fontSize: 12,
-    color: colors.textPrimary,
-    marginLeft: 4,
-  },
-  trialButton: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  trialButtonText: {
-    fontSize: 12,
-    color: colors.green,
+  headerTitle: {
+    fontSize: 18,
     fontWeight: '600',
+    color: colors.textPrimary,
+    marginLeft: spacing.sm,
+  },
+  headerRight: {
+    width: 40,
+    alignItems: 'flex-end',
   },
   messagesContainer: {
     flex: 1,

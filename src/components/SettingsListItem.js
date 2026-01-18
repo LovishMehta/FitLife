@@ -7,14 +7,17 @@ import spacing from '../theme/spacing';
 /**
  * Settings List Item Component
  */
-const SettingsListItem = ({ icon, title, description, onPress }) => {
+const SettingsListItem = ({ icon, title, description, onPress, danger }) => {
+  const iconColor = danger ? colors.error : colors.teal;
+  const titleColor = danger ? colors.error : colors.textPrimary;
+  
   return (
     <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.iconContainer}>
-        <Ionicons name={icon} size={24} color={colors.teal} />
+        <Ionicons name={icon} size={24} color={iconColor} />
       </View>
       <View style={styles.content}>
-        <Text style={styles.title}>{title}</Text>
+        <Text style={[styles.title, { color: titleColor }]}>{title}</Text>
         {description && <Text style={styles.description}>{description}</Text>}
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.textLight} />

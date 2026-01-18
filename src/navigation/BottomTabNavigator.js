@@ -4,9 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
 
 import HomeStackNavigator from './HomeStackNavigator';
-import ExercisesScreen from '../screens/ExercisesScreen';
 import ProgressScreen from '../screens/ProgressScreen';
-import ChallengesScreen from '../screens/ChallengesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 
 const Tab = createBottomTabNavigator();
@@ -20,14 +18,10 @@ const BottomTabNavigator = () => {
 
           if (route.name === 'Today') {
             iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Exercises') {
-            iconName = focused ? 'fitness' : 'fitness-outline';
           } else if (route.name === 'Progress') {
-            iconName = focused ? 'leaf' : 'leaf-outline';
-          } else if (route.name === 'Challenges') {
-            iconName = focused ? 'trophy' : 'trophy-outline';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
+            iconName = focused ? 'stats-chart' : 'stats-chart-outline';
+          } else if (route.name === 'Settings') {
+            iconName = focused ? 'settings' : 'settings-outline';
           }
 
           return <Ionicons name={iconName} size={size} color={color} />;
@@ -57,13 +51,6 @@ const BottomTabNavigator = () => {
         }}
       />
       <Tab.Screen 
-        name="Exercises" 
-        component={ExercisesScreen}
-        options={{
-          tabBarLabel: 'Exercises',
-        }}
-      />
-      <Tab.Screen 
         name="Progress" 
         component={ProgressScreen}
         options={{
@@ -71,17 +58,10 @@ const BottomTabNavigator = () => {
         }}
       />
       <Tab.Screen 
-        name="Challenges" 
-        component={ChallengesScreen}
-        options={{
-          tabBarLabel: 'Challenges',
-        }}
-      />
-      <Tab.Screen 
-        name="Profile" 
+        name="Settings" 
         component={ProfileScreen}
         options={{
-          tabBarLabel: 'Profile',
+          tabBarLabel: 'Settings',
         }}
       />
     </Tab.Navigator>
