@@ -57,9 +57,8 @@ const WeeklyChart = ({ weeklyData, goal }) => {
         height={220}
         chartConfig={chartConfig}
         style={styles.chart}
-        fromZero={true}
-        showValuesOnTopOfBars={false}
-        withInnerLines={true}
+        fromZero
+        withInnerLines
         segments={4}
       />
       <View style={styles.statsContainer}>

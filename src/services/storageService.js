@@ -41,6 +41,21 @@ class StorageService {
   }
 
   /**
+   * Get today's step count
+   * @returns {Promise<number>}
+   */
+  async getTodaySteps() {
+    try {
+      const today = this.getTodayKey();
+      const history = await this.getStepHistory();
+      return history[today] || 0;
+    } catch (error) {
+      console.error('Error getting today\'s steps:', error);
+      return 0;
+    }
+  }
+
+  /**
    * Get step history for the last N days
    * @param {number} days - Number of days to retrieve (default: 7)
    * @returns {Promise<Array>} Array of {date, steps} objects
