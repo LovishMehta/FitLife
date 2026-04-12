@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../theme/colors';
 import spacing from '../theme/spacing';
@@ -7,23 +7,30 @@ import spacing from '../theme/spacing';
 /**
  * Metrics Card Component - Displays calories or water intake
  */
-const MetricsCard = ({ title, value, unit, icon, progress = 0, maxValue = 100 }) => {
+const MetricsCard = ({ title, value, unit, icon, progress = 0, maxValue = 100, onPress }) => {
   const progressPercentage = Math.min((progress / maxValue) * 100, 100);
+  const isWaterIntake = title === 'Water Intake';
+  const CardWrapper = isWaterIntake && onPress ? TouchableOpacity : View;
 
   return (
-    <View style={styles.container}>
+    <CardWrapper
+      style={styles.container}
+      onPress={onPress}
+      activeOpacity={isWaterIntake ? 0.7 : 1}
+      disabled={!isWaterIntake || !onPress}
+    >
       <View style={styles.header}>
         <Ionicons name={icon} size={20} color={colors.teal} style={styles.icon} />
         <Text style={styles.title}>{title}</Text>
       </View>
       <Text style={styles.value}>{value}</Text>
       {unit && <Text style={styles.unit}>{unit}</Text>}
-      {title === 'Water Intake' && (
+      {isWaterIntake && (
         <View style={styles.progressBar}>
           <View style={[styles.progressFill, { width: `${progressPercentage}%` }]} />
         </View>
       )}
-    </View>
+    </CardWrapper>
   );
 };
 
@@ -79,6 +86,9 @@ const styles = StyleSheet.create({
 });
 
 export default MetricsCard;
+
+
+
 
 
 

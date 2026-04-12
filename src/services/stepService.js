@@ -100,25 +100,35 @@ class StepService {
         this.baselineSteps = baselineSteps;
         this.isBaselineSet = true;
         
-        // If we have saved steps, use that as initial value
-        if (savedStepsToday > 0) {
-          callback(savedStepsToday);
-          lastReportedSteps = savedStepsToday;
-        } else {
-          callback(0);
-          lastReportedSteps = 0;
+        // On Android: If we have saved steps, calculate what the baseline should be
+        // The baseline should be: currentDeviceSteps - savedStepsToday
+        // This way, when we calculate stepsSinceBaseline, we get the correct total
+        if (Platform.OS === 'android' && savedStepsToday > 0) {
+          // Adjust baseline to account for steps already taken today
+          // This ensures that stepsSinceBaseline + savedStepsToday = correct total
+          baselineSteps = Math.max(0, currentSteps - savedStepsToday);
+          this.baselineSteps = baselineSteps;
         }
+        
+        // Report initial value
+        callback(savedStepsToday);
+        lastReportedSteps = savedStepsToday;
         return;
       }
 
       // Calculate steps since baseline
       const stepsSinceBaseline = Math.max(0, currentSteps - baselineSteps);
       
-      // On Android, we need to add saved steps from earlier today
-      // On iOS, stepsSinceBaseline is already today's steps
-      const totalStepsToday = savedStepsToday > 0 
-        ? savedStepsToday + stepsSinceBaseline 
-        : stepsSinceBaseline;
+      // Calculate total steps for today
+      let totalStepsToday;
+      if (Platform.OS === 'android') {
+        // On Android: baseline was adjusted to account for saved steps
+        // So stepsSinceBaseline + savedStepsToday = total steps today
+        totalStepsToday = stepsSinceBaseline + savedStepsToday;
+      } else {
+        // On iOS: stepsSinceBaseline is already today's steps (starts from 0)
+        totalStepsToday = stepsSinceBaseline;
+      }
 
       // Only update if steps increased (avoid going backwards)
       if (totalStepsToday >= lastReportedSteps) {

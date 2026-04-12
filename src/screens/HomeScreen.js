@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
   Linking,
   AppState,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -20,6 +21,7 @@ import Constants from 'expo-constants';
 
 import AICoachCard from '../components/AICoachCard';
 import MetricsCard from '../components/MetricsCard';
+import WaterIntakeModal from '../components/WaterIntakeModal';
 import colors from '../theme/colors';
 import spacing from '../theme/spacing';
 import stepService from '../services/stepService';
@@ -32,9 +34,11 @@ import userService from '../services/userService';
 const HomeScreen = ({ navigation }) => {
   const [steps, setSteps] = useState(0);
   const [goal, setGoal] = useState(10000);
-  const [calories, setCalories] = useState(450);
+  const [calories, setCalories] = useState(0);
   const [waterIntake, setWaterIntake] = useState(2.5);
   const [waterGoal, setWaterGoal] = useState(3.0);
+  const [waterModalVisible, setWaterModalVisible] = useState(false);
+  const stepsRef = useRef(0); // Keep ref for interval access
   const [isLoading, setIsLoading] = useState(true);
   const [isPedometerAvailable, setIsPedometerAvailable] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -44,6 +48,21 @@ const HomeScreen = ({ navigation }) => {
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
   const appState = useRef(AppState.currentState);
   const stepsWhenBackgrounded = useRef(0);
+  const refreshIntervalRef = useRef(null);
+  
+  // Animation values for step meter
+  const animatedSteps = useRef(new Animated.Value(0)).current;
+  const animatedProgress = useRef(new Animated.Value(0)).current;
+  const previousStepsRef = useRef(0);
+  const [animatedStrokeDashoffset, setAnimatedStrokeDashoffset] = useState(0);
+  const [displayedSteps, setDisplayedSteps] = useState(0);
+  const isFirstLoadRef = useRef(true);
+  
+  // Smooth, professional animations
+  const dialScale = useRef(new Animated.Value(1)).current;
+  const stepTextScale = useRef(new Animated.Value(1)).current;
+  const glowOpacity = useRef(new Animated.Value(0)).current;
+
 
   useEffect(() => {
     // Check if running in Expo Go
@@ -81,36 +100,18 @@ const HomeScreen = ({ navigation }) => {
     return () => {
       console.log('📱 HomeScreen unmounting - cleaning up');
       subscription?.remove();
+      // Clear refresh interval
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+        refreshIntervalRef.current = null;
+      }
       // Only unsubscribe when component fully unmounts (app closing)
       // Keep subscription active when navigating to other screens
     };
   }, []);
 
-  // Handle app going to background or coming to foreground
-  const handleAppStateChange = async (nextAppState) => {
-    if (
-      appState.current.match(/inactive|background/) &&
-      nextAppState === 'active'
-    ) {
-      // App has come to the foreground - sync with device step count
-      console.log('📱 App came to foreground - syncing step count...');
-      await syncStepsAfterBackground();
-    } else if (
-      appState.current === 'active' &&
-      nextAppState.match(/inactive|background/)
-    ) {
-      // App has gone to the background - save current step count
-      console.log('📱 App went to background - saving step count...');
-      stepsWhenBackgrounded.current = steps;
-      await storageService.saveTodaySteps(steps);
-      console.log(`📱 Saved ${steps} steps before going to background`);
-    }
-    
-    appState.current = nextAppState;
-  };
-
   // Sync step count when app returns from background
-  const syncStepsAfterBackground = async () => {
+  const syncStepsAfterBackground = React.useCallback(async () => {
     try {
       const available = await stepService.isAvailable();
       if (!available) {
@@ -142,7 +143,12 @@ const HomeScreen = ({ navigation }) => {
           // This ensures we don't lose steps taken while in background
           const finalSteps = Math.max(newSteps, savedStepsToday);
           setSteps(finalSteps);
+          stepsRef.current = finalSteps;
           await storageService.saveTodaySteps(finalSteps);
+          
+          // Update calories
+          const newCalories = Math.round(finalSteps * 0.04);
+          setCalories(newCalories);
           
           if (finalSteps > savedStepsToday) {
             console.log(`📱 ✅ Captured ${finalSteps - savedStepsToday} steps taken while in background`);
@@ -160,49 +166,85 @@ const HomeScreen = ({ navigation }) => {
         setStepCounterStatus('tracking');
         if (newSteps >= 0) {
           setSteps(newSteps);
+          stepsRef.current = newSteps;
           await storageService.saveTodaySteps(newSteps);
         }
       }, savedStepsToday);
     }
-  };
+  }, []);
+
+  // Handle app going to background or coming to foreground
+  const handleAppStateChange = React.useCallback(async (nextAppState) => {
+    if (
+      appState.current.match(/inactive|background/) &&
+      nextAppState === 'active'
+    ) {
+      // App has come to the foreground - sync with device step count
+      console.log('📱 App came to foreground - syncing step count...');
+      await syncStepsAfterBackground();
+    } else if (
+      appState.current === 'active' &&
+      nextAppState.match(/inactive|background/)
+    ) {
+      // App has gone to the background - save current step count
+      console.log('📱 App went to background - saving step count...');
+      const currentStepsValue = stepsRef.current;
+      stepsWhenBackgrounded.current = currentStepsValue;
+      await storageService.saveTodaySteps(currentStepsValue);
+      console.log(`📱 Saved ${currentStepsValue} steps before going to background`);
+    }
+    
+    appState.current = nextAppState;
+  }, [syncStepsAfterBackground]);
 
   // Reinitialize when screen comes into focus to ensure pedometer is active
   useFocusEffect(
     React.useCallback(() => {
-      console.log('📱 HomeScreen focused - ensuring pedometer is active...');
-      // Reinitialize to ensure subscription is active
-      // stepService.watchStepCount will replace any existing subscription safely
-      const reinitPedometer = async () => {
+      console.log('📱 HomeScreen focused - refreshing data...');
+      // Refresh data immediately when screen comes into focus
+      const refreshData = async () => {
+        try {
+          const history = await storageService.getStepHistory();
+          const todayKey = storageService.getTodayKey();
+          const savedStepsToday = history[todayKey] || 0;
+          setSteps(savedStepsToday);
+          stepsRef.current = savedStepsToday;
+          const newCalories = Math.round(savedStepsToday * 0.04);
+          setCalories(newCalories);
+        } catch (error) {
+          console.error('Error refreshing data:', error);
+        }
+      };
+      refreshData();
+      
+      // Ensure pedometer subscription is active (only if not already subscribed)
+      const ensurePedometerActive = async () => {
         try {
           const available = await stepService.isAvailable();
-          if (available) {
+          if (available && !stepService.subscription) {
             const history = await storageService.getStepHistory();
             const todayKey = storageService.getTodayKey();
             const savedStepsToday = history[todayKey] || 0;
             
-            // Get current steps from state or storage
-            const currentStepsValue = steps || savedStepsToday;
-            
-            // Reinitialize subscription (will replace old one if exists)
             stepService.watchStepCount(async (newSteps) => {
-              console.log(`📱 ✅ Real-time step count update:`, newSteps);
-              setStepCounterStatus('tracking');
-              setPermissionStatus('granted');
               if (newSteps >= 0) {
                 setSteps(newSteps);
+                stepsRef.current = newSteps;
                 await storageService.saveTodaySteps(newSteps);
+                const newCalories = Math.round(newSteps * 0.04);
+                setCalories(newCalories);
                 if (newSteps > 0) {
                   await userService.incrementActiveDays();
                 }
               }
-            }, currentStepsValue);
+            }, savedStepsToday);
           }
         } catch (error) {
-          console.error('Error reinitializing pedometer:', error);
+          console.error('Error ensuring pedometer active:', error);
         }
       };
-      reinitPedometer();
-    }, [steps])
+      ensurePedometerActive();
+    }, []) // No dependencies - only run on focus/blur
   );
 
   const initializeApp = async () => {
@@ -210,7 +252,13 @@ const HomeScreen = ({ navigation }) => {
       // Load saved goal first
       const savedGoal = await storageService.getDailyGoal();
       setGoal(savedGoal);
-      
+
+      // Load water intake and goal
+      const savedWaterIntake = await storageService.getWaterIntake();
+      const savedWaterGoal = await storageService.getWaterGoal();
+      setWaterIntake(savedWaterIntake || 0);
+      setWaterGoal(savedWaterGoal || 3.0);
+
       // Clear any dummy values (8234) from storage
       const savedSteps = await storageService.getStepHistory();
       const todayKey = storageService.getTodayKey();
@@ -258,20 +306,79 @@ const HomeScreen = ({ navigation }) => {
           console.log('📱 Starting step count watcher...');
           
           let hasReceivedUpdate = false;
-          stepService.watchStepCount(async (newSteps) => {
+      stepService.watchStepCount(async (newSteps) => {
             // newSteps will be the actual step count from the device
             hasReceivedUpdate = true;
             console.log(`📱 ✅ Real-time step count update:`, newSteps);
             setStepCounterStatus('tracking');
             
             if (newSteps >= 0) {
-              setSteps(newSteps);
-              await storageService.saveTodaySteps(newSteps);
+        setSteps(newSteps);
+              stepsRef.current = newSteps; // Update ref
+        await storageService.saveTodaySteps(newSteps);
+              
+              // Update calories based on steps (0.04 calories per step)
+              const newCalories = Math.round(newSteps * 0.04);
+              setCalories(newCalories);
+              
               if (newSteps > 0) {
                 await userService.incrementActiveDays();
               }
             }
           }, savedStepsToday);
+          
+          // Clear any existing refresh interval
+          if (refreshIntervalRef.current) {
+            clearInterval(refreshIntervalRef.current);
+            refreshIntervalRef.current = null;
+          }
+          
+          // Set up automatic refresh interval to ensure data stays updated
+          // This helps catch updates even if pedometer callback is slow
+          const refreshInterval = setInterval(async () => {
+            try {
+              // Reload steps from storage (updated by pedometer callback)
+              const history = await storageService.getStepHistory();
+              const todayKey = storageService.getTodayKey();
+              const currentSavedSteps = history[todayKey] || 0;
+              
+              // Use ref to get current steps value (avoids closure issue)
+              const currentStepsValue = stepsRef.current;
+              
+              // Update if different from current state
+              if (currentSavedSteps !== currentStepsValue) {
+                console.log(`📱 Auto-refresh: Updating steps from ${currentStepsValue} to ${currentSavedSteps}`);
+                setSteps(currentSavedSteps);
+                stepsRef.current = currentSavedSteps;
+                
+                // Update calories
+                const newCalories = Math.round(currentSavedSteps * 0.04);
+                setCalories(newCalories);
+              }
+              
+              // Also try to get fresh step count from device (works on iOS)
+              if (Platform.OS === 'ios') {
+                try {
+                  const deviceSteps = await stepService.getTodaySteps();
+                  if (deviceSteps > 0 && deviceSteps !== currentSavedSteps) {
+                    console.log(`📱 Auto-refresh: Device shows ${deviceSteps} steps`);
+                    setSteps(deviceSteps);
+                    stepsRef.current = deviceSteps;
+                    await storageService.saveTodaySteps(deviceSteps);
+                    const newCalories = Math.round(deviceSteps * 0.04);
+                    setCalories(newCalories);
+                  }
+                } catch (error) {
+                  // Ignore errors - Android doesn't support date range queries
+                }
+              }
+            } catch (error) {
+              console.error('Error in auto-refresh:', error);
+            }
+          }, 5000); // Refresh every 5 seconds to reduce battery drain
+          
+          // Store interval ID for cleanup
+          refreshIntervalRef.current = refreshInterval;
           
           // Give it a moment to start, then check if we're getting updates
           setTimeout(() => {
@@ -294,7 +401,11 @@ const HomeScreen = ({ navigation }) => {
             console.log('Today steps from date range:', todaySteps);
             if (todaySteps > 0) {
               setSteps(todaySteps);
+              stepsRef.current = todaySteps;
               await storageService.saveTodaySteps(todaySteps);
+              // Update calories
+              const newCalories = Math.round(todaySteps * 0.04);
+              setCalories(newCalories);
             }
           } catch (error) {
             console.log('Date range query not available (Android limitation), using watchStepCount');
@@ -309,6 +420,13 @@ const HomeScreen = ({ navigation }) => {
           // Only use saved value if it's not the dummy number (8234)
           if (savedValue && savedValue !== 8234) {
             setSteps(savedValue);
+            stepsRef.current = savedValue;
+            // Update calories
+            const newCalories = Math.round(savedValue * 0.04);
+            setCalories(newCalories);
+          } else {
+            // Initialize calories to 0 if no steps
+            setCalories(0);
           }
         }
       } else {
@@ -319,6 +437,12 @@ const HomeScreen = ({ navigation }) => {
         // Only use saved value if it's not the dummy number (8234)
         if (savedValue && savedValue !== 8234) {
           setSteps(savedValue);
+          stepsRef.current = savedValue;
+          // Update calories
+          const newCalories = Math.round(savedValue * 0.04);
+          setCalories(newCalories);
+        } else {
+          setCalories(0);
         }
       }
 
@@ -334,8 +458,8 @@ const HomeScreen = ({ navigation }) => {
       // Try to get today's steps from service (works on iOS)
       const todaySteps = await stepService.getTodaySteps();
       if (todaySteps > 0) {
-        setSteps(todaySteps);
-        await storageService.saveTodaySteps(todaySteps);
+      setSteps(todaySteps);
+      await storageService.saveTodaySteps(todaySteps);
       } else {
         // If service returns 0, try to load from storage (but skip dummy values)
         const savedSteps = await storageService.getStepHistory();
@@ -458,12 +582,163 @@ const HomeScreen = ({ navigation }) => {
     );
   };
 
-  const percentage = Math.min((steps / goal) * 100, 100);
+  const handleOpenWaterModal = () => {
+    setWaterModalVisible(true);
+  };
+
+  const handleCloseWaterModal = () => {
+    setWaterModalVisible(false);
+  };
+
+  const handleAddWater = async (amount) => {
+    // amount is in ml, convert to liters (can be negative for removal)
+    const amountInLiters = amount / 1000;
+    const newIntake = Math.max(0, parseFloat((waterIntake + amountInLiters).toFixed(2)));
+    setWaterIntake(newIntake);
+    await storageService.saveWaterIntake(newIntake);
+  };
+
+  // Calculate circle dimensions - memoized to avoid recalculation
   const size = 280;
   const strokeWidth = 20;
   const radius = (size - strokeWidth) / 2;
-  const circumference = radius * 2 * Math.PI;
-  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+  const circumference = useMemo(() => radius * 2 * Math.PI, [radius]);
+
+  // Smooth, professional animations for steps and progress
+  useEffect(() => {
+    // On first load, initialize values
+    if (isFirstLoadRef.current && steps > 0) {
+      animatedSteps.setValue(0);
+      animatedProgress.setValue(0);
+      dialScale.setValue(0.8);
+      stepTextScale.setValue(0.8);
+      isFirstLoadRef.current = false;
+    }
+    
+    const previousSteps = previousStepsRef.current;
+    const stepDifference = steps - previousSteps;
+    const percentage = Math.min((steps / goal) * 100, 100);
+    
+    // Check if we hit a milestone (every 1000 steps)
+    const isMilestone = steps > 0 && steps % 1000 === 0 && stepDifference > 0;
+    
+    const animations = [];
+    
+    // 1. Smooth dial scale - subtle pulse on step change
+    if (stepDifference > 0) {
+      animations.push(
+        Animated.sequence([
+          Animated.spring(dialScale, {
+            toValue: 1.03,
+            tension: 100,
+            friction: 7,
+            useNativeDriver: true,
+          }),
+          Animated.spring(dialScale, {
+            toValue: 1,
+            tension: 100,
+            friction: 7,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    }
+    
+    // 2. Smooth text scale - gentle pulse on number change
+    if (stepDifference > 0) {
+      animations.push(
+        Animated.sequence([
+          Animated.spring(stepTextScale, {
+            toValue: 1.05,
+            tension: 150,
+            friction: 8,
+            useNativeDriver: true,
+          }),
+          Animated.spring(stepTextScale, {
+            toValue: 1,
+            tension: 150,
+            friction: 8,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    }
+    
+    // 3. Milestone celebration - subtle glow effect
+    if (isMilestone) {
+      Animated.sequence([
+        Animated.timing(glowOpacity, {
+          toValue: 0.4,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowOpacity, {
+          toValue: 0,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+    
+    // 4. Smooth step count animation
+    animations.push(
+      Animated.timing(animatedSteps, {
+        toValue: steps,
+        duration: 800,
+        useNativeDriver: false,
+      })
+    );
+    
+    // 5. Smooth progress dial animation
+    animations.push(
+      Animated.timing(animatedProgress, {
+        toValue: percentage,
+        duration: 800,
+        useNativeDriver: false,
+      })
+    );
+    
+    // Run animations in parallel
+    Animated.parallel(animations).start();
+    
+    previousStepsRef.current = steps;
+  }, [steps, goal]);
+
+
+  // Listen to animated values and update state for SVG rendering
+  useEffect(() => {
+    // Initialize strokeDashoffset to full circumference (no progress shown initially)
+    setAnimatedStrokeDashoffset(circumference);
+    
+    // Update displayed steps - using animation callbacks instead of listeners
+    const stepsListenerId = animatedSteps.addListener(({ value }) => {
+      setDisplayedSteps(Math.floor(value));
+    });
+    
+    // Update stroke dash offset for circular progress
+    const progressListenerId = animatedProgress.addListener(({ value }) => {
+      const percentage = value;
+      const offset = circumference - (percentage / 100) * circumference;
+      setAnimatedStrokeDashoffset(offset);
+    });
+    
+    // Update progress circle opacity
+    const opacityListenerId = progressColorOpacity.addListener(({ value }) => {
+      setProgressOpacity(value);
+    });
+    
+    return () => {
+      if (stepsListenerId) {
+        animatedSteps.removeListener(stepsListenerId);
+      }
+      if (progressListenerId) {
+        animatedProgress.removeListener(progressListenerId);
+      }
+      if (opacityListenerId) {
+        progressColorOpacity.removeListener(opacityListenerId);
+      }
+    };
+  }, [circumference]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -522,8 +797,8 @@ const HomeScreen = ({ navigation }) => {
                   3. Build: eas build --profile development --platform android{'\n'}
                   4. Install the APK on your Poco F6{'\n'}
                   5. Open the app - permission dialog will appear!
-                </Text>
-              </View>
+          </Text>
+        </View>
             )}
             <TouchableOpacity
               style={styles.permissionButton}
@@ -634,8 +909,26 @@ const HomeScreen = ({ navigation }) => {
         {/* Daily Steps Goal - Circular Progress */}
         <View style={styles.stepsContainer}>
           <Text style={styles.stepsTitle}>Your Daily Steps Goal</Text>
-          <View style={styles.circularProgress}>
+          <Animated.View
+            style={[
+              styles.circularProgress,
+              {
+                transform: [{ scale: dialScale }],
+              },
+            ]}
+          >
+            {/* Milestone glow effect - subtle */}
+            <Animated.View
+              style={[
+                styles.glowOverlay,
+                {
+                  opacity: glowOpacity,
+                },
+              ]}
+            />
+            
             <Svg width={size} height={size}>
+              {/* Background circle */}
               <Circle
                 stroke={colors.border}
                 fill="none"
@@ -644,6 +937,7 @@ const HomeScreen = ({ navigation }) => {
                 r={radius}
                 strokeWidth={strokeWidth}
               />
+              {/* Progress circle with smooth animated stroke */}
               <Circle
                 stroke={colors.teal}
                 fill="none"
@@ -652,7 +946,7 @@ const HomeScreen = ({ navigation }) => {
                 r={radius}
                 strokeWidth={strokeWidth}
                 strokeDasharray={`${circumference} ${circumference}`}
-                strokeDashoffset={strokeDashoffset}
+                strokeDashoffset={animatedStrokeDashoffset}
                 strokeLinecap="round"
                 transform={`rotate(-90 ${size / 2} ${size / 2})`}
               />
@@ -662,10 +956,19 @@ const HomeScreen = ({ navigation }) => {
                 <Ionicons name="footsteps" size={20} color={colors.teal} />
                 <Ionicons name="footsteps" size={20} color={colors.teal} />
               </View>
-              <Text style={styles.stepsValue}>{steps.toLocaleString()}</Text>
+              <Animated.Text
+                style={[
+                  styles.stepsValue,
+                  {
+                    transform: [{ scale: stepTextScale }],
+                  },
+                ]}
+              >
+                {displayedSteps.toLocaleString()}
+              </Animated.Text>
               <Text style={styles.stepsGoal}>of {goal.toLocaleString()} steps</Text>
             </View>
-          </View>
+          </Animated.View>
           <Text style={styles.swipeText}>
             Swipe to log exercise <Ionicons name="arrow-forward" size={14} color={colors.green} />
           </Text>
@@ -686,6 +989,7 @@ const HomeScreen = ({ navigation }) => {
             icon="water-outline"
             progress={waterIntake}
             maxValue={waterGoal}
+            onPress={handleOpenWaterModal}
           />
         </View>
 
@@ -704,6 +1008,15 @@ const HomeScreen = ({ navigation }) => {
           </View>
         </View>
       </ScrollView>
+
+      {/* Water Intake Modal */}
+      <WaterIntakeModal
+        visible={waterModalVisible}
+        onClose={handleCloseWaterModal}
+        currentIntake={waterIntake}
+        goal={waterGoal}
+        onAddWater={handleAddWater}
+      />
     </SafeAreaView>
   );
 };
@@ -777,6 +1090,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,
+  },
+  glowOverlay: {
+    position: 'absolute',
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: colors.teal,
+    opacity: 0.15,
+    zIndex: -1,
   },
   stepsContent: {
     position: 'absolute',

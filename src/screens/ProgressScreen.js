@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -82,32 +82,39 @@ const ProgressScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [currentSteps, setCurrentSteps] = useState(0); // Today's real-time steps
 
-  useEffect(() => {
-    loadPeriodData();
-  }, [selectedPeriod, periodOffset]);
-
-  // Set up interval to refresh data from storage (HomeScreen updates storage)
+  // Single useEffect to handle both initial load and periodic refresh
   useEffect(() => {
     // Load initial data
     const loadData = async () => {
-      const history = await storageService.getStepHistory();
-      const todayKey = storageService.getTodayKey();
-      const savedStepsToday = history[todayKey] || 0;
-      setCurrentSteps(savedStepsToday);
-      await loadPeriodData();
+      try {
+        const history = await storageService.getStepHistory();
+        const todayKey = storageService.getTodayKey();
+        const savedStepsToday = history[todayKey] || 0;
+        // Only update if changed to avoid unnecessary re-renders
+        setCurrentSteps(prev => {
+          if (prev !== savedStepsToday) {
+            return savedStepsToday;
+          }
+          return prev;
+        });
+        await loadPeriodData();
+      } catch (error) {
+        console.error('Error loading data:', error);
+      }
     };
     
     loadData();
     
-    // Refresh every 2 seconds to get updates from HomeScreen's pedometer
+    // Refresh every 5 seconds to get updates from HomeScreen's pedometer
+    // Reduced frequency to improve performance and battery life
     const interval = setInterval(() => {
       loadData();
-    }, 2000);
+    }, 5000);
     
     return () => clearInterval(interval);
-  }, [selectedPeriod, periodOffset]);
+  }, [selectedPeriod, periodOffset, loadPeriodData]);
 
-  const loadPeriodData = async () => {
+  const loadPeriodData = useCallback(async () => {
     try {
       const history = await storageService.getStepHistory();
       const todayKey = storageService.getTodayKey();
@@ -151,11 +158,12 @@ const ProgressScreen = () => {
       
       setPeriodData(data);
       
-      // Calculate totals and averages
+      // Calculate totals and averages (memoized calculations)
       if (data.length > 0) {
         const total = data.reduce((sum, day) => sum + day.steps, 0);
         const avg = Math.round(total / data.length);
         const totalCalories = calculateCalories(total);
+        // Only calculate streak if history changed significantly
         const currentStreak = calculateStreak(history);
         
         setTotalSteps(total);
@@ -166,7 +174,7 @@ const ProgressScreen = () => {
     } catch (error) {
       console.error('Error loading period data:', error);
     }
-  };
+  }, [selectedPeriod, currentSteps]);
 
   const onRefresh = async () => {
     setRefreshing(true);

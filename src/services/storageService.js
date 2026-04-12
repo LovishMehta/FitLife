@@ -10,8 +10,11 @@ class StorageService {
       STEP_HISTORY: '@step_history',
       DAILY_GOAL: '@daily_goal',
       LAST_SAVE_DATE: '@last_save_date',
+      WATER_INTAKE: '@water_intake',
+      WATER_GOAL: '@water_goal',
     };
     this.DEFAULT_GOAL = 10000;
+    this.DEFAULT_WATER_GOAL = 3.0; // liters
   }
 
   /**
@@ -170,6 +173,86 @@ class StorageService {
   }
 
   /**
+   * Save today's water intake
+   * @param {number} amount - Water intake in liters
+   * @returns {Promise<void>}
+   */
+  async saveWaterIntake(amount) {
+    try {
+      const today = this.getTodayKey();
+      const waterData = await this.getWaterIntakeHistory();
+      
+      waterData[today] = amount;
+      
+      await AsyncStorage.setItem(
+        this.KEYS.WATER_INTAKE,
+        JSON.stringify(waterData)
+      );
+    } catch (error) {
+      console.error('Error saving water intake:', error);
+    }
+  }
+
+  /**
+   * Get today's water intake
+   * @returns {Promise<number>} Water intake in liters
+   */
+  async getWaterIntake() {
+    try {
+      const today = this.getTodayKey();
+      const waterData = await this.getWaterIntakeHistory();
+      return waterData[today] || 0;
+    } catch (error) {
+      console.error('Error getting water intake:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get all water intake history
+   * @returns {Promise<Object>}
+   */
+  async getWaterIntakeHistory() {
+    try {
+      const data = await AsyncStorage.getItem(this.KEYS.WATER_INTAKE);
+      return data ? JSON.parse(data) : {};
+    } catch (error) {
+      console.error('Error getting water intake history:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Get user's daily water goal
+   * @returns {Promise<number>} Water goal in liters
+   */
+  async getWaterGoal() {
+    try {
+      const goal = await AsyncStorage.getItem(this.KEYS.WATER_GOAL);
+      return goal ? parseFloat(goal) : this.DEFAULT_WATER_GOAL;
+    } catch (error) {
+      console.error('Error getting water goal:', error);
+      return this.DEFAULT_WATER_GOAL;
+    }
+  }
+
+  /**
+   * Set user's daily water goal
+   * @param {number} goal - New daily water goal in liters
+   * @returns {Promise<void>}
+   */
+  async setWaterGoal(goal) {
+    try {
+      await AsyncStorage.setItem(
+        this.KEYS.WATER_GOAL,
+        goal.toString()
+      );
+    } catch (error) {
+      console.error('Error setting water goal:', error);
+    }
+  }
+
+  /**
    * Clear all stored data (for testing/reset)
    * @returns {Promise<void>}
    */
@@ -179,6 +262,8 @@ class StorageService {
         this.KEYS.STEP_HISTORY,
         this.KEYS.DAILY_GOAL,
         this.KEYS.LAST_SAVE_DATE,
+        this.KEYS.WATER_INTAKE,
+        this.KEYS.WATER_GOAL,
       ]);
     } catch (error) {
       console.error('Error clearing storage:', error);
